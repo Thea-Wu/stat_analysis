@@ -1,0 +1,364 @@
+---
+title: A Statistical Analysis of the Likelihood of Heart Disease and the Recommended Medical Tests
+author: "Yifan Wu"
+date: "Apr 15, 2021"
+output: rmdformats::readthedown 
+subtitle: Biostatistics II – Final Project
+---
+
+## **Data definitions:**  
+
+* age: Age in years  
+
+* sex: 1 = Male; 0 = Female  
+
+* cp: Chest pain type  
+	1 = Typical angina  
+	2 = Atypical angina  
+	3 = Non-anginal pain  
+	4 = Asymptomatic  
+	
+* trestbps: Resting blood pressure (in mm Hg on admission to the hospital)   
+	
+* fbs: (Fasting blood sugar > 120 mg/dl)  (1 = true; 0 = false)
+	
+* restecg: 	Resting electrocardiographic results
+	0 = Normal
+	1 = Having ST-T wave abnormality (T wave inversions and/or ST elevation or depression of > 0.05 mV)
+	2= Showing probable or definite left ventricular hypertrophy by Estes' criteria
+	
+* thalach:	Maximum heart rate achieved 
+	
+* exang:	Exercise induced angina (1 = yes; 0 = no)
+	
+* oldpeak:	ST depression induced by exercise relative to rest
+	
+* slope:	Slope of the peak exercise ST segment
+	1 = upsloping; 2 = flat; 3 = downsloping
+	
+* ca:	Number of major vessels (0-3) colored by flourosopy
+	
+* thal:	3 = normal; 6 = fixed defect; 7 = reversable defect
+	
+* diag:	0: No presense of heart disease 
+	1-4: Number of major vessels that  > 50% diameter narrowing
+	
+## R packages
+```{r warning=FALSE,message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(readxl)
+library(compareGroups)
+library(GGally)
+library(pROC)
+library(kableExtra)
+library(nnet)
+library(ordinal)
+
+options(scipen=999)
+```
+
+# Data Collection and Processing
+```{r}
+## original data
+US1 <- read_excel("HD.xlsx", sheet = "US1")
+US2 <- read_excel("HD.xlsx", sheet = "US2")
+EU1 <- read_excel("HD.xlsx", sheet = "EU1")
+EU2 <- read_excel("HD.xlsx", sheet = "EU2")
+```
+
+```{r}
+## data processing
+US1 <- US1 %>% mutate(area = "US1")
+US2 <- US2 %>% mutate(area = "US2")
+EU1 <- EU1 %>% mutate(area = "EU1")
+EU2 <- EU2 %>% mutate(area = "EU2")
+
+# combine all for hospitals
+HD <- rbind(US1, US2, EU1, EU2) %>%
+    mutate(sex = factor(sex, levels = c(0, 1), labels = c('Female', 'Male')),
+           cp = factor(cp, levels = c(1, 2, 3, 4),
+                       labels = c('Typical angina', 'Atypical angina', 'Non-anginal pain', 'Asymptomatic')),
+           fbs = factor(fbs, levels = c(0, 1), labels = c('False', 'True')),
+           restecg = factor(restecg, levels = c(0, 1, 2),
+                            labels = c('Normal', 'ST-T Abnormality', 'Left ventricular hypertrophy')),
+           exang = factor(exang, levels = c(0, 1), labels = c('No', 'Yes')),
+           slope = factor(slope, levels = c(1, 2, 3),
+                          labels = c('upsloping', 'flat', 'downsloping')),
+           thal = factor(thal, levels = c(3, 6, 7),
+                         labels = c('normal', 'fixed defect', 'reversable defect')),
+           diag = factor(diag, levels = c(0, 1, 2, 3, 4),
+                         labels = c('Diag 0', 'Diag 1', 'Diag 2', 'Diag 3', 'Diag 4')),
+           dichotomized_diag = ifelse(diag == 'Diag 0', 'No heart disease', 'Heart disease'))
+head(HD)
+```
+
+```{r}
+## check NA
+sum(is.na(HD))
+```
+No missing value is found.  
+
+```{r}
+library(compareGroups)
+library(dplyr)
+library(kableExtra)
+
+out <- compareGroups(diag ~ age + trestbps + thalach + oldpeak + ca, data = HD, 
+                     method = c(1,1,1,1,1),include.label = TRUE, simplify = T, byrow = TRUE)
+res <- createTable(out, show.p.overall = T, extra.labels = c("",
+"", "", "","", ""))
+colnames(res$descr)[6] <- "P-value"
+compareGroups::export2md(res, caption = "Table 1. Contingency Table for Patients under Continuous Variables") %>% kable_styling(c("responsive", "condensed", "hover"), fixed_thead = T) %>%
+  kable_classic(full_width = F, html_font = "Cambria") %>%
+  footnote(general = "Hypothesis Test: t test ")
+```
+
+Some basic statics of continuous variables, including age, trestbps, thalach, oldpeak, and ca, are shown in Table 1. The t test is applied to test if there is any relationship between heart disease and these variables. All p-values less than 0.01 are definitely less than 0.05 significance level. This mean heart disease are associated with these five variables.
+
+```{r warning = FALSE, message=FALSE}
+out <- compareGroups(diag ~ sex + cp + fbs + restecg + exang + slope + thal + area, data = HD, 
+                     method = c(3,3,3,3,3,3,3),include.label = TRUE, simplify = T, byrow = TRUE)
+res <- createTable(out, show.p.overall = T, extra.labels = c("",
+"", "", "","", ""))
+colnames(res$descr)[6] <- "P-value"
+compareGroups::export2md(res, caption = "Table 2. Contingency Table for Patients under Categorial Variables") %>% kable_styling(c("responsive", "condensed", "hover"), fixed_thead = T) %>%
+  kable_classic(full_width = F, html_font = "Cambria") %>%
+  footnote(general = "Hypothesis Test: Chi-squared test ")
+```
+
+
+```{r, warning =FALSE}
+## check the relationship between diag and cp
+diag_cp <- table(HD$diag, HD$cp)
+diag_cp
+chisq.test(diag_cp, correct=FALSE)
+
+## check the relationship between diag and slop
+diag_slope <- table(HD$diag, HD$slope)
+diag_slope
+chisq.test(diag_slope, correct=FALSE)
+
+## check the relationship between giag and thal 
+diag_thal <- table(HD$diag, HD$thal)
+diag_thal 
+chisq.test(diag_thal, correct=FALSE)
+```
+Those basic statics of categorical variables, including sex, fbs, restecg, exang, region, cp, slope, and thal, are shown in Table 2. The Chi-squared test test is applied to test if there is any relationship between heart disease and these variables. All p-values less than or equal to 0.01 are definitely less than 0.05 significance level. This mean heart disease are associated with these categorical variables.  
+
+By dichotomizing the severity variable and considering the presence of narrowing vessel as response variable. We do the same step as above for both continuous and categorial variables.
+```{r}
+out <- compareGroups(dichotomized_diag ~ age + trestbps + thalach + oldpeak + ca, data = HD, 
+                     method = c(1,1,1,1,1),include.label = TRUE, simplify = T, byrow = TRUE)
+res <- createTable(out, show.p.overall = T, extra.labels = c("",
+"", ""))
+colnames(res$descr)[3] <- "P-value"
+compareGroups::export2md(res, caption = "Table 3. Contingency Table for Patients under Continuous Variables") %>% kable_styling(c("responsive", "condensed", "hover"), fixed_thead = T) %>%
+  kable_classic(full_width = F, html_font = "Cambria") %>%
+  footnote(general = "Hypothesis Test: t test ")
+```
+
+```{r warning = FALSE, message=FALSE}
+out <- compareGroups(dichotomized_diag ~ sex + cp + fbs + restecg + exang + slope + thal + area, data = HD,
+                     method = c(3,3,3,3,3,3,3),include.label = TRUE, simplify = T, byrow = TRUE)
+res <- createTable(out, show.p.overall = T, extra.labels = c("",
+"", ""))
+colnames(res$descr)[3] <- "P-value"
+compareGroups::export2md(res, caption = "Table 4. Contingency Table for Patients under Categorial Variables") %>% kable_styling(c("responsive", "condensed", "hover"), fixed_thead = T) %>%
+  kable_classic(full_width = F, html_font = "Cambria") %>%
+  footnote(general = "Hypothesis Test: Chi-squared test ")
+```
+
+In terms of the dichotomized presence of heart disease, two contingency tables above show that all these 13 continuous and categorial variables are associated with heart diseases as all p-values are less than 0.05 significance level.
+
+Before the further analysis on the association between the heart diseases and the variables, colinearity needs to be checked to determine if there is relationship between those factors of interest except age and sex.
+```{r message=FALSE, warning=FALSE}
+ggpairs(select(HD, cp, trestbps, fbs, restecg, thalach, exang, oldpeak, slope, ca, thal))
+```
+Correlations are small indicating no colinearity between factors of interest. We can continue the statistical analysis and modeling based on these independent variables.
+
+# Bivariate Relationship Analysis
+```{r warning=FALSE, message=FALSE}
+## logit model for bivaribles
+HD <- HD %>% mutate(dichotomized_diag = ifelse(diag == 'Diag 0', 0, 1))
+# age 
+logit_age <- glm(dichotomized_diag ~ age, data = HD, family = "binomial")
+coef_age <- round(exp(cbind(OR = coef(logit_age), confint(logit_age))), 2)
+
+# sex 
+logit_sex <- glm(dichotomized_diag ~ sex, data = HD, family = "binomial")
+coef_sex <- round(exp(cbind(OR = coef(logit_sex), confint(logit_sex))), 2)
+
+# cp
+logit_cp <- glm(dichotomized_diag ~ cp, data = HD, family = "binomial")
+coef_cp <- round(exp(cbind(OR = coef(logit_cp), confint(logit_cp))), 2)
+
+# trestbps
+logit_trestbps <- glm(dichotomized_diag ~ trestbps, data = HD, family = "binomial")
+coef_trestbps <- round(exp(cbind(OR = coef(logit_trestbps), confint(logit_trestbps))), 2)
+
+# fbs
+logit_fbs <- glm(dichotomized_diag ~ fbs, data = HD, family = "binomial")
+coef_fbs <- round(exp(cbind(OR = coef(logit_fbs), confint(logit_fbs))), 2)
+
+# restecg
+logit_restecg <- glm(dichotomized_diag ~ restecg, data = HD, family = "binomial")
+coef_restecg <- round(exp(cbind(OR = coef(logit_restecg), confint(logit_restecg))), 2)
+
+# thalach
+logit_thalach <- glm(dichotomized_diag ~ thalach, data = HD, family = "binomial")
+coef_thalach <- round(exp(cbind(OR = coef(logit_thalach), confint(logit_thalach))), 2)
+
+# exang
+logit_exang <- glm(dichotomized_diag ~ exang, data = HD, family = "binomial")
+coef_exang <- round(exp(cbind(OR = coef(logit_exang), confint(logit_exang))), 2)
+
+# oldpeak
+logit_oldpeak <- glm(dichotomized_diag ~ oldpeak, data = HD, family = "binomial")
+coef_oldpeak <- round(exp(cbind(OR = coef(logit_oldpeak), confint(logit_oldpeak))), 2)
+
+# slope
+logit_slope <- glm(dichotomized_diag ~ slope, data = HD, family = "binomial")
+coef_slope <- round(exp(cbind(OR = coef(logit_slope), confint(logit_slope))), 2)
+
+# ca
+logit_ca <- glm(dichotomized_diag ~ ca, data = HD, family = "binomial")
+coef_ca <- round(exp(cbind(OR = coef(logit_ca), confint(logit_ca))), 2)
+
+# thal
+logit_thal <- glm(dichotomized_diag ~ thal, data = HD, family = "binomial")
+coef_thal <- round(exp(cbind(OR = coef(logit_thal), confint(logit_thal))), 2)
+
+# area
+logit_area <- glm(dichotomized_diag ~ area, data = HD, family = "binomial")
+coef_area <- round(exp(cbind(OR = coef(logit_area), confint(logit_area))), 2)
+
+# combine the coefficients and CIs
+coefs <- as.data.frame(rbind(coef_age[2,], coef_sex[2,], coef_cp[2:4,], coef_trestbps[2,],
+                             coef_fbs[2,], coef_restecg[2:3,], coef_thalach[2,], coef_exang[2,],
+                             coef_oldpeak[2,], coef_slope[2:3,], coef_ca[2,], coef_thal[2:3,], coef_area[2:4,]))
+rownames(coefs) <- c('age', 'sex: Male', 'cp: Atypical angina', 'cp: Non-anginal pain', 'cp: Asymptomatic',
+                     'trestbps', 'fbs: True', 'restecg: ST-T Abnormality', 'restecg: Left ventricular hypertrophy',
+                     'thalach', 'exang: Yes', 'oldpeak', 'slope: flat',
+                     'slope: downsloping', 'ca', 'thal: fixed defect', 'thal: reversable defect',
+                     'area: EU2', 'area: US1', 'area: US2')
+coefs <- coefs %>%
+    mutate(`95%CI` = paste0('(', `2.5 %`, ', ', `97.5 %`, ')')) %>%
+    select(OR, `95%CI`)
+colnames(coefs) <- c('Unadjusted OR', '95% Confidence Interval')
+coefs %>% kable(align = 'c', caption = 'Table . Unadjusted OR for presence of heart disease') %>% kable_classic(full_width = F, html_font = "Cambria")
+```
+
+```{r echo=FALSE,message=FALSE,results='hide',warning=FALSE}
+# HD <- HD %>% mutate(dichotomized_diag = ifelse(diag == 'Diag 0', 0, 1))
+# 
+# dependent_os <- "dichotomized_diag"
+# explanatory <- c("age", "sex", "cp", "trestbps", "fbs", "restecg", "thalach", "exang","oldpeak", "slope", "ca", "thal", "area")
+# 
+# caption <- "<h5 style=color:black;text-align:center><b>Table 2. Multiple Cox Proportional Hazards Regression Model of Overall Survival."
+# 
+# HD %>% finalfit(dependent_os, explanatory, add_dependent_label = FALSE) -> t1
+# knitr::kable(t1, row.names=FALSE, align=c("l", "l", "r", "r", "r", "r"))
+```
+
+```{r}
+# glm model
+logit_reg <- glm(dichotomized_diag ~ . - diag, data = HD, family = "binomial")
+summary(logit_reg)
+```
+age, trestbps, fbs, restecg, thalach, and ca are not significant as their p-values are less than 0.05 significance level. By excluding these variables, we conduct the following logistic regression model.
+
+```{r fig.dim=c(12,10), warning=FALSE, message=FALSE}
+## adjusted OR
+
+library("finalfit")
+HD <- HD %>% mutate(dichotomized_diag = ifelse(diag == 'Diag 0', 0, 1))
+
+dependent_os <- "dichotomized_diag"
+explanatory <- c("sex", "cp","exang","oldpeak", "slope","thal", "area")
+
+caption <- "<h5 style=color:black;text-align:center><b>Table 2. Multiple Cox Proportional Hazards Regression Model of Overall Survival."
+
+HD %>% finalfit(dependent_os, explanatory, add_dependent_label = FALSE) -> t1
+knitr::kable(t1, row.names=FALSE, align=c("l", "l", "r", "r", "r", "r"))
+
+HD %>%
+         or_plot(dependent_os, explanatory,dependent_label = "Adjusted OR for presence of heart disease", table_text_size=3, title_text_size=14,
+    plot_opts=list(xlab("Adjusted OR, 95% CI"), theme(axis.title = element_text(size=10))))
+```
+
+The adjusted odds ratio and 95% CI are shown in the above table. All of those shown variables are significant in the model.
+
+COnsidering the ROC, 
+```{r warning=FALSE, message=FALSE}
+# calculate ROC
+roc <- roc(HD$dichotomized_diag, logit_reg$fitted.values, plot = T, print.thres = T, print.auc = T)
+```
+
+Both ROC curve (receiver operating characteristic curve) and AUC (area under the ROC curve) are useful in evaluating the performance of the fitting model. The higher value of the upper-right corner value of ROC and the higher the AUC, the better the model is at distinguishing between patients with the disease and no disease. AUC equal to 0.94 in the above plot indicates the model works well. 
+
+# CLM
+We consider Cumulative Link Models for Ordinal Regression for analyzing the disease due to the order of the outcome variable.
+```{r}
+
+clm_all <- clm(diag ~ . - dichotomized_diag, data = HD)
+summary(clm_all)
+```
+
+The model shows the the heart disease is irrelevant with age (0.284), trestbps (0.210), and fbs (0.114) as their p-values are larger than 0.05. We update the model by excluding these variables.
+
+```{r}
+# update model
+clm_update <- clm(diag ~ sex + cp + restecg + thalach + exang + oldpeak + slope + ca + thal + area, data = HD)
+summary(clm_update)
+```
+
+Even though the updates model shows the validation, we need to check if every factor of interest meet the PH assumptions. 
+
+```{r, warning=FALSE, message=FALSE}
+nominal_test(clm_update)
+```
+The test shows that sex, restecg, thalach, exang, oldpeak and slope satisfy the PH assumptions as their p-values are greater than 0.05 significance level. However, variables including cp, thal, ca and area do not satisfy the PH assumptions as their p-values are less than 0.05 significance level. Then, we only take variables sex, restecg, thalach, exang, oldpeak and slope in to consideration for updating the model. 
+
+```{r}
+clm_latest <- clm(diag ~ sex + restecg + thalach + exang + oldpeak + slope, data = HD)
+summary(clm_latest)
+```
+
+We want to guarantee the difference between the first updated and the second updated model by checking ANOVA.
+
+```{r}
+anova(clm_update, clm_latest)
+```
+The p-value less than 0.05 significance level implies the difference between two model. Thus, we go along the latest model.
+
+```{r}
+
+clm_OR <- coef(clm_latest) %>% as.data.frame() %>% exp() %>% round(2)
+clm_CI <- confint(clm_latest) %>% as.data.frame() %>% exp() %>% round(2)
+clm_adjusted_table <- cbind(clm_OR[5:nrow(clm_OR),], clm_CI)
+colnames(clm_adjusted_table) <- c('Adjusted OR', '2.5 %', '97.5 %')
+clm_adjusted_table <- clm_adjusted_table %>%
+    mutate(`95% CI` = paste0('(', `2.5 %`, ', ', `97.5 %`, ')')) %>%
+    select(`Adjusted OR`, `95% CI`)
+clm_adjusted_table %>% kable(align = 'c', caption = 'Table. Adjusted OR and CI of Cumulative Model') %>% kable_classic(full_width = F, html_font = "Cambria")
+```
+```{r warning=FALSE, message=FALSE}
+# calculate ROC & AUC
+clm_roc <- roc(HD$diag, clm_latest$fitted.values, plot = T, print.thres = T, print.auc = T)
+```
+The high AUC in the plot shows the good performance of the model.  
+
+```{r}
+cbind(rownames(clm_OR)[1:4], clm_OR[1:4,]) %>%
+    as.data.frame() %>% rename(`Proportional OR` = V2, `Between cumulative category` = V1) %>%
+    kable(align = 'c', caption = 'Table. Intercept between cumulative levels of heart disease severity') %>% kable_classic(full_width = F, html_font = "Cambria")
+```
+The cumulative odds ratios among four diagnoses of the heart disease are show above. 
+
+# Choice on medical tests
+Statistical analysis suggests the insignificance of medical tests in deterring the diagnosis of the heart disease including cp, thestbps, fbs, ca, thal, and thalach. 
+Meanwhile, medical tests including restecg, exang, oldpeak, and slope play an important role in helping diagonising the heart disease. As a result, the choice on medical tests should be restecg, exang, oldpeak, and slope tests. The total cost of these medical test is \$102.8 (\$15.50 for restecg test and \$87.30 for  exang, oldpeak, and slope tests). This cost is relatively low and acceptable even if the one does not have the insurance.
+
+# Conclusion
+The total cost of restecg, exang, oldpeak, and slope medical test is \$102.8 (\$15.50 for restecg test and \$87.30 for  exang, oldpeak, and slope tests). This cost is relatively low and acceptable even if the one does not have the insurance.
